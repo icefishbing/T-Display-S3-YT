@@ -1,87 +1,114 @@
+#include <Arduino.h>
 #include <TFT_eSPI.h>
-#include <lvgl.h>
-//#include "ui/ui.h"  // Comment out this line
+#include <SPI.h>
 
-// Display and LVGL objects
 TFT_eSPI tft = TFT_eSPI();
-static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[LV_HOR_RES_MAX * 10];
-static lv_disp_drv_t disp_drv;
 
-// Screen dimensions
-uint16_t screenWidth = 480;
-uint16_t screenHeight = 480;
-
-// Display flush callback
-void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
-    uint32_t w = (area->x2 - area->x1 + 1);
-    uint32_t h = (area->y2 - area->y1 + 1);
-
-    tft.startWrite();
-    tft.setAddrWindow(area->x1, area->y1, w, h);
-    tft.pushColors((uint16_t *)&color_p->full, w * h, true);
-    tft.endWrite();
-
-    lv_disp_flush_ready(disp);
-}
-
-// Initialize display
-void init_display() {
-    tft.init();
-    tft.setRotation(0);
-    tft.fillScreen(TFT_BLACK);
-    
-    // Set up backlight if your display has it
-    // pinMode(TFT_BL, OUTPUT);
-    // digitalWrite(TFT_BL, HIGH);
-}
-
-// Initialize LVGL
-void init_lvgl() {
-    lv_init();
-    
-    // Allocate larger drawing buffer for 480x480
-    static lv_color_t draw_buf[480 * 20];  // Increased buffer size
-    static lv_disp_draw_buf_t disp_buf;
-    lv_disp_draw_buf_init(&disp_buf, draw_buf, NULL, 480 * 20);
-    
-    // Display driver initialization
-    static lv_disp_drv_t disp_drv;
-    lv_disp_drv_init(&disp_drv);
-    disp_drv.flush_cb = my_disp_flush;
-    disp_drv.draw_buf = &disp_buf;
-    disp_drv.hor_res = 480;
-    disp_drv.ver_res = 480;
-    lv_disp_drv_register(&disp_drv);
-}
-
-// UI Scaling Explanation
-void init_UI() {
-    // Create a simple test screen instead of using ui_Screen1
-    static lv_obj_t* screen = lv_obj_create(NULL);
-    lv_scr_load(screen);
-    
-    // Create a test label
-    lv_obj_t* label = lv_label_create(screen);
-    lv_label_set_text(label, "Hello World!");
-    lv_obj_center(label);
-}
+// Define pins from schematic
+#define TOUCH_IRQ 7
+#define TFT_BL   2
 
 void setup() {
-    Serial.begin(115200);
-    
-    // Initialize hardware
-    init_display();
-    
-    // Initialize LVGL
-    init_lvgl();
-    
-    // Setup UI
-    //ui_init();  // Comment out this line
-    init_UI();
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("ESP32-S3 Display Test Starting...");
+  
+  // Initialize backlight with correct pin
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL, HIGH);
+  
+  // Initialize touch interrupt pin
+  pinMode(TOUCH_IRQ, INPUT);
+  
+  // Initialize display
+  tft.init();
+  tft.setRotation(2);
+  tft.fillScreen(TFT_BLACK);
+  
+  // Set backlight to 50% (GC9A01 might be too bright at 100%)
+  ledcSetup(0, 10000, 8); // PWM channel 0, 10kHz, 8-bit resolution
+  ledcAttachPin(TFT_BL, 0);
+  ledcWrite(0, 127);      // 50% brightness
+  
+  // Display test sequence
+  Serial.println("Starting display test sequence...");
+  
+  // Color test
+  Serial.println("Testing colors...");
+  uint16_t colors[] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_WHITE, TFT_YELLOW, TFT_CYAN, TFT_MAGENTA};
+  for(uint8_t i = 0; i < 7; i++) {
+    tft.fillScreen(colors[i]);
+    delay(500);
+  }
+  
+  // Return to black background
+  tft.fillScreen(TFT_BLACK);
+  
+  // Draw test pattern
+  Serial.println("Drawing test pattern...");
+  
+  // Draw border
+  tft.drawRect(0, 0, tft.width(), tft.height(), TFT_WHITE);
+  
+  // Draw text
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(3);
+  tft.drawString("ESP32-S3", 10, 20);
+  tft.drawString("480x480 Display", 10, 60);
+  
+  // Draw some shapes
+  tft.fillRect(50, 120, 100, 100, TFT_RED);
+  tft.fillCircle(250, 170, 50, TFT_GREEN);
+  tft.fillTriangle(350, 220, 400, 120, 450, 220, TFT_BLUE);
+  
+  // Draw grid pattern
+  for(int i = 0; i < tft.width(); i += 40) {
+    tft.drawLine(i, 240, i, 440, TFT_YELLOW);
+    tft.drawLine(0, 240 + i, tft.width(), 240 + i, TFT_YELLOW);
+  }
+  
+  Serial.println("Setup complete");
 }
 
 void loop() {
-    lv_timer_handler();
-    delay(5);
+  static uint32_t hueShift = 0;
+  
+  // Create a moving rainbow pattern
+  for(int x = 50; x < 430; x++) {
+    for(int y = 300; y < 400; y++) {
+      uint8_t hue = x + hueShift;
+      uint8_t sat = 255;
+      uint8_t val = 255;
+      
+      // Simple HSV to RGB conversion
+      uint8_t r, g, b;
+      uint8_t region = hue / 43;
+      uint8_t remainder = (hue - (region * 43)) * 6;
+      
+      uint8_t p = (val * (255 - sat)) >> 8;
+      uint8_t q = (val * (255 - ((sat * remainder) >> 8))) >> 8;
+      uint8_t t = (val * (255 - ((sat * (255 - remainder)) >> 8))) >> 8;
+      
+      switch(region) {
+        case 0: r = val; g = t; b = p; break;
+        case 1: r = q; g = val; b = p; break;
+        case 2: r = p; g = val; b = t; break;
+        case 3: r = p; g = q; b = val; break;
+        case 4: r = t; g = p; b = val; break;
+        default: r = val; g = p; b = q; break;
+      }
+      
+      tft.drawPixel(x, y, tft.color565(r, g, b));
+    }
+  }
+  hueShift++;
+  
+  // Check touch (if touched, will invert colors temporarily)
+  if(digitalRead(TOUCH_IRQ) == LOW) {
+    tft.invertDisplay(true);
+    delay(100);
+    tft.invertDisplay(false);
+  }
+  
+  delay(20);
 } 
